@@ -1,0 +1,9 @@
+Flask-Login
+Werkzeug
+Flask
+Flask-WTF
+Flask-SQLAlchemy
+Flask-Mail
+Flask-Limiter
+Flask-Migrate
+flask-jwt-extended
