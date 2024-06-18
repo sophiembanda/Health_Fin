@@ -7,3 +7,4 @@ Flask-Mail
 Flask-Limiter
 Flask-Migrate
 flask-jwt-extended
+email_validator

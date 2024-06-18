@@ -1,11 +1,10 @@
-#models.py
 from datetime import datetime
 from flask import current_app
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin
 from werkzeug.security import generate_password_hash, check_password_hash
 from itsdangerous import URLSafeTimedSerializer as Serializer
-from validators import validate_password, validate_phone_number
+from .validators import validate_password, validate_phone_number
 
 db = SQLAlchemy()
 
@@ -82,15 +81,8 @@ class Transaction(db.Model):
 
 class LoanApplication(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    first_name = db.Column(db.String(50), nullable=False)
-    last_name = db.Column(db.String(50), nullable=False)
-    email = db.Column(db.String(120), nullable=False)
-    phone_number = db.Column(db.String(15), nullable=False)
-    required_treatment = db.Column(db.Text, nullable=False)
-    estimated_cost = db.Column(db.Float, nullable=False)
-    healthcare_provider = db.Column(db.String(120), nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    application_date = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    amount = db.Column(db.Float, nullable=False)
     status = db.Column(db.String(50), nullable=False, default="Pending")
 
 class EmailVerificationToken(db.Model):
@@ -132,13 +124,6 @@ class PasswordResetToken(db.Model):
         except:
             return None
         return user_id
-
-class ContactFormSubmission(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(50), nullable=False)
-    email = db.Column(db.String(120), nullable=False)
-    message = db.Column(db.Text, nullable=False)
-    date_created = db.Column(db.DateTime, default=datetime.utcnow)
 
 class ContactMessage(db.Model):
     id = db.Column(db.Integer, primary_key=True)

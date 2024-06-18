@@ -1,4 +1,3 @@
-#routes.py
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity, create_access_token
 from flask_wtf.csrf import generate_csrf
@@ -9,7 +8,6 @@ from .validators import validate_contact_form, validate_amount, validate_email, 
 from .services import send_contact_message
 from . import db, csrf, limiter
 import re
-
 
 # Define blueprint
 main_bp = Blueprint('main', __name__, url_prefix='/api')
@@ -44,42 +42,66 @@ def register():
     except Exception as e:
         logger.error(f"Error registering user: {str(e)}")
         return jsonify({"error": "Error registering user"}), 500
-    
-@main_bp.route('/signup', methods=['GET','POST'])
-def signup():
-    if request.method == 'POST':
-        if request.is_json:
-            data = request.get_json()
-        else:
-            data = request.form
 
-        if not data or not all(key in data for key in ('first_name', 'last_name', 'phone_number', 'email', 'password', 'confirm_password')):
-            return jsonify(message="Missing data"), 400
-        if not re.match(r"[^@]+@[^@]+\.[^@]+", data['email']):
-            return jsonify(message="Invalid email format"), 400
-        phone_number_error = validate_phone_number(data['phone_number'])
-        if phone_number_error:
-            return jsonify(message=phone_number_error), 400
-        if data['password'] != data['confirm_password']:
-            return jsonify(message="Passwords do not match"), 400
-        password_error = validate_password(data['password'])
-        if password_error:
-            return jsonify(message=password_error), 400
-        if User.query.filter_by(email=data['email']).first():
-            return jsonify(message="Email already registered"), 400
-        hashed_password = generate_password_hash(data['password'])
-        new_user = User(
-            first_name=data['first_name'],
-            last_name=data['last_name'],
-            phone_number=data['phone_number'],
-            email=data['email'],
-            password=hashed_password
-        )
+@main_bp.route('/signup', methods=['POST'])
+def signup():
+    if request.is_json:
+        data = request.get_json()
+
+        # Validate required fields
+        required_fields = ['first_name', 'last_name', 'phone_number', 'email', 'password', 'confirm_password']
+        if not all(key in data for key in required_fields):
+            return jsonify({"error": "Missing required fields"}), 400
+
+        first_name = data['first_name']
+        last_name = data['last_name']
+        phone_number = data['phone_number']
+        email = data['email']
+        password = data['password']
+        confirm_password = data['confirm_password']
+
+        validation_errors = []
+        if len(first_name) < 2:
+            validation_errors.append('First name must be at least 2 characters long.')
+        if len(last_name) < 2:
+            validation_errors.append('Last name must be at least 2 characters long.')
+        if not re.match(r'^[A-Za-z\s]*$', first_name):
+            validation_errors.append('First name should only contain letters and spaces.')
+        if not re.match(r'^[A-Za-z\s]*$', last_name):
+            validation_errors.append('Last name should only contain letters and spaces.')
+
+        try:
+            if not phone_number.isdigit():
+                validation_errors.append('Phone number should only contain digits.')
+        except ValueError:
+            validation_errors.append('Phone number should only contain digits.')
+
+        if len(phone_number) != 10:
+            validation_errors.append('Phone number must be 10 digits long.')
+        if not re.match(r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$', email):
+            validation_errors.append('Invalid email address.')
+
+        if password != confirm_password:
+            validation_errors.append('Passwords do not match.')
+
+        validation_error = validate_password(password)
+        if validation_error:
+            validation_errors.append(validation_error)
+
+        if validation_errors:
+            return jsonify({"error": validation_errors}), 400
+
+        new_user = User(first_name=first_name, last_name=last_name, phone_number=phone_number, email=email)
+        new_user.set_password(password)
+        new_user.set_phone_number(phone_number)
         db.session.add(new_user)
         db.session.commit()
-        return jsonify(message="User created"), 201
 
-# User Login Endpoint
+        return jsonify({"message": "User registered successfully"}), 201
+
+    return jsonify({"error": "Invalid request method or content type"}), 405
+
+
 @main_bp.route('/login', methods=['POST'])
 def login():
     try:
@@ -98,251 +120,124 @@ def login():
         logger.error(f"Error logging in: {str(e)}")
         return jsonify({"error": "Error logging in"}), 500
 
-
-# Dashboard Data Endpoint
+# User Dashboard Route
 @main_bp.route('/dashboard', methods=['GET'])
-@csrf.exempt
 @jwt_required()
-def get_dashboard_data():
-    try:
-        user_id = get_jwt_identity()
-        savings = Savings.query.filter_by(user_id=user_id).first()
-        income = db.session.query(db.func.sum(Income.amount)).filter_by(user_id=user_id).scalar() or 0
-        expenses = db.session.query(db.func.sum(Expense.amount)).filter_by(user_id=user_id).scalar() or 0
+def dashboard():
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({"error": "User not found"}), 404
 
-        balance = savings.balance if savings else 0
+    savings = Savings.query.filter_by(user_id=user_id).all()
+    transactions = Transaction.query.filter_by(user_id=user_id).all()
+    loans = LoanApplication.query.filter_by(user_id=user_id).all()
+    incomes = Income.query.filter_by(user_id=user_id).all()
+    expenses = Expense.query.filter_by(user_id=user_id).all()
 
-        return jsonify({
-            "balance": balance,
-            "income": income,
-            "savings": balance,
-            "expenses": expenses
-        }), 200
-    except Exception as e:
-        logger.error(f"Error fetching dashboard data: {str(e)}")
-        return jsonify({"error": "Error fetching dashboard data"}), 500
+    return jsonify({
+        "user": user.email,
+        "savings": [{"id": s.id, "balance": s.balance} for s in savings],
+        "transactions": [{"id": t.id, "type": t.type, "amount": t.amount, "timestamp": t.timestamp} for t in transactions],
+        "loans": [{"id": l.id, "amount": l.amount, "status": l.status} for l in loans],
+        "incomes": [{"id": i.id, "amount": i.amount, "date": i.date} for i in incomes],
+        "expenses": [{"id": e.id, "amount": e.amount, "date": e.date} for e in expenses]
+    }), 200
 
-# Finances Data Endpoint
-@main_bp.route('/finances', methods=['GET'])
-@csrf.exempt
+@main_bp.route('/contact', methods=['POST'])
+@limiter.limit("5 per hour")
+def contact():
+    data = request.get_json()
+    errors = validate_contact_form(data)
+    if errors:
+        return jsonify({"errors": errors}), 400
+
+    contact_message = ContactMessage(
+        name=data['name'],
+        email=data['email'],
+        message=data['message']
+    )
+    db.session.add(contact_message)
+    db.session.commit()
+
+    send_contact_message(contact_message)
+    return jsonify({"message": "Contact message sent successfully"}), 200
+
+@main_bp.route('/savings', methods=['POST'])
 @jwt_required()
-def get_finances():
-    try:
-        user_id = get_jwt_identity()
-        transactions = Transaction.query.filter_by(user_id=user_id).all()
-        finances = [
-            {"date": transaction.timestamp, "amount": transaction.amount, "type": transaction.type}
-            for transaction in transactions
-        ]
-        return jsonify({"finances": finances}), 200
-    except Exception as e:
-        logger.error(f"Error fetching finances: {str(e)}")
-        return jsonify({"error": "Error fetching finances"}), 500
+def create_savings():
+    data = request.get_json()
+    user_id = get_jwt_identity()
+    savings = Savings(user_id=user_id, balance=0.0)
+    db.session.add(savings)
+    db.session.commit()
+    return jsonify({"message": "Savings account created successfully"}), 201
 
-# Expense Summary Endpoint
-@main_bp.route('/expenses/summary', methods=['GET'])
-@csrf.exempt
+@main_bp.route('/savings/<int:savings_id>/deposit', methods=['POST'])
 @jwt_required()
-def get_expense_summary():
-    try:
-        user_id = get_jwt_identity()
-        daily_expenses = db.session.query(db.func.sum(Expense.amount)).filter(
-            Expense.user_id == user_id,
-            db.func.date(Expense.date) == db.func.date(db.func.now())
-        ).scalar() or 0
+def deposit(savings_id):
+    data = request.get_json()
+    user_id = get_jwt_identity()
+    savings = Savings.query.get_or_404(savings_id)
+    if savings.user_id != user_id:
+        return jsonify({"error": "Unauthorized"}), 403
 
-        monthly_expenses = db.session.query(db.func.sum(Expense.amount)).filter(
-            Expense.user_id == user_id,
-            db.func.extract('month', Expense.date) == db.func.extract('month', db.func.now())
-        ).scalar() or 0
+    amount = data.get('amount')
+    if not validate_amount(amount):
+        return jsonify({"error": "Invalid amount"}), 400
 
-        yearly_expenses = db.session.query(db.func.sum(Expense.amount)).filter(
-            Expense.user_id == user_id,
-            db.func.extract('year', Expense.date) == db.func.extract('year', db.func.now())
-        ).scalar() or 0
+    savings.balance += amount
+    transaction = Transaction(user_id=user_id, type='deposit', amount=amount)
+    db.session.add(transaction)
+    db.session.commit()
+    return jsonify({"message": "Deposit successful", "balance": savings.balance}), 200
 
-        return jsonify({
-            "daily": daily_expenses,
-            "monthly": monthly_expenses,
-            "yearly": yearly_expenses
-        }), 200
-    except Exception as e:
-        logger.error(f"Error fetching expense summary: {str(e)}")
-        return jsonify({"error": "Error fetching expense summary"}), 500
+@main_bp.route('/savings/<int:savings_id>/withdraw', methods=['POST'])
+@jwt_required()
+def withdraw(savings_id):
+    data = request.get_json()
+    user_id = get_jwt_identity()
+    savings = Savings.query.get_or_404(savings_id)
+    if savings.user_id != user_id:
+        return jsonify({"error": "Unauthorized"}), 403
 
-# Add Income Endpoint
+    amount = data.get('amount')
+    if not validate_amount(amount):
+        return jsonify({"error": "Invalid amount"}), 400
+
+    if savings.balance < amount:
+        return jsonify({"error": "Insufficient balance"}), 400
+
+    savings.balance -= amount
+    transaction = Transaction(user_id=user_id, type='withdrawal', amount=amount)
+    db.session.add(transaction)
+    db.session.commit()
+    return jsonify({"message": "Withdrawal successful", "balance": savings.balance}), 200
+
 @main_bp.route('/income', methods=['POST'])
-@csrf.exempt
 @jwt_required()
 def add_income():
-    try:
-        user_id = get_jwt_identity()
-        data = request.get_json()
-        amount = data.get('amount')
-        
-        if not validate_amount(amount):
-            return jsonify({"error": "Invalid amount"}), 400
+    data = request.get_json()
+    user_id = get_jwt_identity()
+    amount = data.get('amount')
+    if not validate_amount(amount):
+        return jsonify({"error": "Invalid amount"}), 400
 
-        income = Income(user_id=user_id, amount=amount)
-        db.session.add(income)
-        db.session.commit()
-        
-        return jsonify({"success": "Income added successfully"}), 200
-    except Exception as e:
-        logger.error(f"Error adding income: {str(e)}")
-        return jsonify({"error": "Error adding income"}), 500
+    income = Income(user_id=user_id, amount=amount)
+    db.session.add(income)
+    db.session.commit()
+    return jsonify({"message": "Income added successfully"}), 201
 
-# Add Expense Endpoint
 @main_bp.route('/expense', methods=['POST'])
-@csrf.exempt
 @jwt_required()
 def add_expense():
-    try:
-        user_id = get_jwt_identity()
-        data = request.get_json()
-        amount = data.get('amount')
-        
-        if not validate_amount(amount):
-            return jsonify({"error": "Invalid amount"}), 400
+    data = request.get_json()
+    user_id = get_jwt_identity()
+    amount = data.get('amount')
+    if not validate_amount(amount):
+        return jsonify({"error": "Invalid amount"}), 400
 
-        expense = Expense(user_id=user_id, amount=amount)
-        db.session.add(expense)
-        db.session.commit()
-        
-        return jsonify({"success": "Expense added successfully"}), 200
-    except Exception as e:
-        logger.error(f"Error adding expense: {str(e)}")
-        return jsonify({"error": "Error adding expense"}), 500
-
-# Add Deposit Endpoint
-@main_bp.route('/savings/deposit', methods=['POST'])
-@csrf.exempt
-@jwt_required()
-def add_deposit():
-    try:
-        user_id = get_jwt_identity()
-        data = request.get_json()
-        amount = data.get('amount')
-        
-        if not validate_amount(amount):
-            return jsonify({"error": "Invalid amount"}), 400
-
-        savings = Savings.query.filter_by(user_id=user_id).first()
-        if not savings:
-            savings = Savings(user_id=user_id, balance=0)
-            db.session.add(savings)
-        
-        savings.balance += amount
-        transaction = Transaction(user_id=user_id, type='deposit', amount=amount)
-        db.session.add(transaction)
-        db.session.commit()
-        
-        return jsonify({"success": "Deposit added successfully", "balance": savings.balance}), 200
-    except Exception as e:
-        logger.error(f"Error adding deposit: {str(e)}")
-        return jsonify({"error": "Error adding deposit"}), 500
-
-# Withdraw Endpoint
-@main_bp.route('/savings/withdraw', methods=['POST'])
-@csrf.exempt
-@jwt_required()
-def withdraw():
-    try:
-        user_id = get_jwt_identity()
-        data = request.get_json()
-        amount = data.get('amount')
-        
-        if not validate_amount(amount):
-            return jsonify({"error": "Invalid amount"}), 400
-
-        savings = Savings.query.filter_by(user_id=user_id).first()
-        if not savings or savings.balance < amount:
-            return jsonify({"error": "Insufficient balance"}), 400
-
-        savings.balance -= amount
-        transaction = Transaction(user_id=user_id, type='withdraw', amount=amount)
-        db.session.add(transaction)
-        db.session.commit()
-        
-        return jsonify({"success": "Withdrawal successful", "balance": savings.balance}), 200
-    except Exception as e:
-        logger.error(f"Error processing withdrawal: {str(e)}")
-        return jsonify({"error": "Error processing withdrawal"}), 500
-
-# Saving Plans Endpoint
-@main_bp.route('/saving-plans', methods=['GET'])
-@csrf.exempt
-@jwt_required()
-def get_saving_plans():
-    try:
-        saving_plans = SavingPlan.query.all()
-        logger.debug(f"Saving Plans fetched: {saving_plans}")
-        saving_plans_data = [{"id": plan.id, "name": plan.name, "description": plan.description} for plan in saving_plans]
-        return jsonify(saving_plans_data), 200
-    except Exception as e:
-        logger.error(f"Error fetching saving plans: {str(e)}")
-        return jsonify({"error": "Error fetching saving plans"}), 500
-
-# Single Saving Plan Endpoint
-@main_bp.route('/saving-plans/<int:id>', methods=['GET'])
-@csrf.exempt
-@jwt_required()
-def get_saving_plan(id):
-    try:
-        plan = SavingPlan.query.get(id)
-        if not plan:
-            return jsonify({"error": "Saving plan not found"}), 404
-        return jsonify({"id": plan.id, "name": plan.name, "description": plan.description}), 200
-    except Exception as e:
-        logger.error(f"Error fetching saving plan: {str(e)}")
-        return jsonify({"error": "Error fetching saving plan"}), 500
-
-# Apply for Loan Endpoint
-@main_bp.route('/loan/apply', methods=['POST'])
-@csrf.exempt
-@jwt_required()
-def apply_for_loan():
-    try:
-        user_id = get_jwt_identity()
-        data = request.get_json()
-        amount = data.get('amount')
-        
-        if not validate_amount(amount):
-            return jsonify({"error": "Invalid amount"}), 400
-
-        loan_application = LoanApplication(user_id=user_id, amount=amount, status="Pending")
-        db.session.add(loan_application)
-        db.session.commit()
-        
-        return jsonify({"success": "Loan application submitted"}), 200
-    except Exception as e:
-        logger.error(f"Error applying for loan: {str(e)}")
-        return jsonify({"error": "Error applying for loan"}), 500
-
-# Contact Form Endpoint
-@main_bp.route('/contact', methods=['POST'])
-@csrf.exempt
-@limiter.limit("3 per hour")
-def contact():
-    try:
-        data = request.get_json()
-        
-        if not validate_contact_form(data):
-            return jsonify({"error": "Invalid contact form data"}), 400
-        
-        contact_message = ContactMessage(
-            name=data.get('name'),
-            email=data.get('email'),
-            phone=data.get('phone'),
-            message=data.get('message')
-        )
-        db.session.add(contact_message)
-        db.session.commit()
-        
-        send_contact_message(contact_message)
-        
-        return jsonify({"success": "Message sent successfully"}), 200
-    except Exception as e:
-        logger.error(f"Error sending contact message: {str(e)}")
-        return jsonify({"error": "Error sending contact message"}), 500
-
+    expense = Expense(user_id=user_id, amount=amount)
+    db.session.add(expense)
+    db.session.commit()
+    return jsonify({"message": "Expense added successfully"}), 201

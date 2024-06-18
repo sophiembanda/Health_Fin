@@ -1,26 +1,24 @@
-#valdators.py
 import re
 from email_validator import validate_email as validate_email_validator, EmailNotValidError
 
 def validate_contact_form(data):
     errors = []
-    
+
     name = data.get('name')
     if not name or len(name) > 50:
         errors.append("Invalid name")
-    
+
     email = data.get('email')
     try:
-        validate_email(email)
+        validate_email_validator(email)
     except EmailNotValidError:
         errors.append("Invalid email")
-    
+
     message = data.get('message')
     if not message or len(message) > 1000:
         errors.append("Invalid message")
-    
-    return errors
 
+    return errors
 
 def validate_amount(amount):
     try:
@@ -34,25 +32,7 @@ def validate_email(email):
         validate_email_validator(email)
         return True
     except EmailNotValidError:
-        return False
-
-# def validate_phone_number(phone_number):
-#     pattern = re.compile(r'^\+?254\d{9}$')
-#     return bool(pattern.match(phone_number))
-
-
-def validate_password(password):
-    if len(password) < 8:
-        return "Password must be at least 8 characters long"
-    if not re.search(r"[a-z]", password):
-        return "Password must contain at least one lowercase letter"
-    if not re.search(r"[A-Z]", password):
-        return "Password must contain at least one uppercase letter"
-    if not re.search(r"[0-9]", password):
-        return "Password must contain at least one number"
-    if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", password):
-        return "Password must contain at least one special character"
-    return None
+        return "Invalid email format."
 
 def validate_phone_number(phone_number):
     if phone_number.startswith("07"):
@@ -65,4 +45,17 @@ def validate_phone_number(phone_number):
         return "Enter a correct phone number"
     return None
 
+
+def validate_password(password):
+    if len(password) < 8:
+        return "Password must be at least 8 characters long"
+    if not re.search(r"[a-z]", password):
+        return "Password must contain at least one lowercase letter"
+    if not re.search(r"[A-Z]", password):
+        return "Password must contain at least one uppercase letter"
+    if not re.search(r"\d", password):
+        return "Password must contain at least one digit"
+    if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", password):
+        return "Password must contain at least one special character (!@#$%^&*(),.?\":{}|<>)"
+    return None
 
